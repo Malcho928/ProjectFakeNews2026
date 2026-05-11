@@ -11,7 +11,7 @@ st.title("🧾 Gemini기반 가짜뉴스 판별기")
 st.write("뉴스 기사 링크 또는 직접 입력한 글을 논문에 정리된 가짜뉴스 경향 기준으로 판별합니다.")
 
 # ⚠️ API 키를 공개 저장소에 올리지 마세요. 학교 프로젝트용으로 직접 넣을 경우 아래 문자열 안에 새 키를 넣으세요.
-GEMINI_API_KEY = "AIzaSyACoYzORFvkc4eE2b4KquJO3_v8UGDdji4"  # 예: "AIza..."
+GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
 GEMINI_MODEL_OPTIONS = {
     "라이트": "gemini-2.5-flash-lite",
     "일반": "gemini-2.5-flash",
