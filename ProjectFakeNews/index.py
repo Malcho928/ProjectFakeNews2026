@@ -554,71 +554,47 @@ AI도 반드시 일반 분석과 같은 8개 카테고리로 각각 평가하라
 - ai_causal_score: 인과 왜곡 위험이 강할수록 높은 0~100 정수
 """
         response = None
-        last_error = None
+  for attempt in range(MAX_GEMINI_RETRIES):
+      try:
+          response = client.models.generate_content(model=gemini_model, contents=prompt)
+          break
+      except Exception as e:
+          if is_quota_error(e):
+              return fallback_deep_analysis(text, rule_result), (
+                  "Gemini 사용량 한도에 도달해 대체 분석을 표시합니다."
+              )
+          if not is_retryable_error(e):
+              raise
+          if attempt < MAX_GEMINI_RETRIES - 1:
+              time.sleep(2 ** attempt)
 
-        for attempt in range(MAX_GEMINI_RETRIES):
-            try:
-                response = client.models.generate_content(
-                    model=gemini_model,
-                    contents=prompt,
-                    config={
-                        "response_mime_type": "application/json",
-                        "temperature": 0.2,
-                    },
-                )
-                break
+  if response is None:
+      return fallback_deep_analysis(text, rule_result), (
+          "선택한 Gemini 모델이 혼잡해 대체 분석을 표시합니다."
+      )
 
-            except Exception as e:
-                last_error = e
+  raw_text = response.text.strip().replace("```json", "").replace("```", "").strip()
+  parsed = json.loads(raw_text)
 
-                if is_quota_error(e):
-                    return fallback_deep_analysis(text, rule_result), (
-                        f"Gemini 사용량 한도에 도달해 대체 분석을 표시합니다. 실제 오류: {str(e)[:200]}"
-                    )
+  defaults = fallback_deep_analysis(text, rule_result)
+  for key, value in defaults.items():
+      parsed.setdefault(key, value)
 
-                if not is_retryable_error(e):
-                    return fallback_deep_analysis(text, rule_result), (
-                        f"Gemini 호출 오류로 대체 분석을 표시합니다. 실제 오류: {type(e).__name__}: {str(e)[:200]}"
-                    )
+  for score_key in [
+      "ai_emotion_score",
+      "ai_exaggeration_score",
+      "ai_source_transparency_score",
+      "ai_risk_score",
+      "ai_frame_score",
+      "ai_authority_borrow_score",
+      "ai_headline_score",
+      "ai_causal_score",
+  ]:
+      parsed[score_key] = clamp_score(parsed.get(score_key))
 
-                if attempt < MAX_GEMINI_RETRIES - 1:
-                    time.sleep(2 ** attempt)
+  return parsed, None
 
-        if response is None:
-            return fallback_deep_analysis(text, rule_result), (
-                f"Gemini 응답이 없어 대체 분석을 표시합니다. 마지막 오류: {str(last_error)[:200]}"
-            )
-
-        if response is None:
-            return fallback_deep_analysis(text, rule_result), (
-                "선택한 Gemini 모델이 혼잡해 대체 분석을 표시합니다."
-            )
-
-        raw_text = response.text.strip().replace("```json", "").replace("```", "").strip()
-        parsed = json.loads(raw_text)
-
-        defaults = fallback_deep_analysis(text, rule_result)
-        for key, value in defaults.items():
-            parsed.setdefault(key, value)
-
-        for score_key in [
-            "ai_emotion_score",
-            "ai_exaggeration_score",
-            "ai_source_transparency_score",
-            "ai_risk_score",
-            "ai_frame_score",
-            "ai_authority_borrow_score",
-            "ai_headline_score",
-            "ai_causal_score",
-        ]:
-            parsed[score_key] = clamp_score(parsed.get(score_key))
-
-        return parsed, None
-
-    except json.JSONDecodeError:
-        return fallback_deep_analysis(text, rule_result), "Gemini 응답 형식이 맞지 않아 대체 분석을 표시합니다."
-    except Exception:
-        return fallback_deep_analysis(text, rule_result), "Gemini 분석 중 문제가 발생해 대체 분석을 표시합니다."
+except json.JSONDecodeError:return fallback_deep_analysis(text, rule_result), "Gemini 응답 형식이 맞지 않아 대체 분석을 표시합니다."except Exception:return fallback_deep_analysis(text, rule_result), "Gemini 분석 중 문제가 발생해 대체 분석을 표시합니다."
 
 
 # -----------------------------
