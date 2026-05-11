@@ -469,7 +469,7 @@ def fallback_deep_analysis(text, rule_result):
 # -----------------------------
 def gemini_analysis(text, rule_result, gemini_model):
     if not GEMINI_API_KEY:
-        return fallback_deep_analysis(text, rule_result), "Gemini API 키가 비어 있어 규칙 기반 대체 분석을 표시합니다."
+        return None, "Gemini API 키가 비어 있습니다. Streamlit Secrets에 GEMINI_API_KEY를 설정하세요."
 
     def is_quota_error(error):
         error_text = str(error).lower()
@@ -479,12 +479,24 @@ def gemini_analysis(text, rule_result, gemini_model):
             "generate_content_free_tier",
             "billing details",
             "resource_exhausted",
+            "permission_denied",
+            "api key",
+            "leaked",
+            "403",
+            "429",
         ]
         return any(signal in error_text for signal in quota_signals)
 
     def is_retryable_error(error):
         error_text = str(error).lower()
-        retryable_signals = ["503", "unavailable", "high demand", "temporarily", "deadline", "timeout"]
+        retryable_signals = [
+            "503",
+            "unavailable",
+            "high demand",
+            "temporarily",
+            "deadline",
+            "timeout",
+        ]
         return any(signal in error_text for signal in retryable_signals)
 
     try:
@@ -498,17 +510,16 @@ def gemini_analysis(text, rule_result, gemini_model):
 
 분석 기준은 한국 학술논문에서 정리된 가짜뉴스 경향을 따른다.
 AI도 반드시 일반 분석과 같은 8개 카테고리로 각각 평가하라.
-8개 카테고리:
-1. 감정 자극도: 불안·분노·공포 등 감정을 자극하는 표현의 강도
-2. 과장·선정성: 과장, 왜곡, 단정, 선정적 표현의 강도
-3. 출처 투명도: 출처·원문·기관·통계·링크 등 검증 가능 근거의 명확성
-4. 종합 위험도: 전체 허위정보 위험 신호의 종합 강도
-5. 의혹·고발 프레임: 의혹, 폭로, 은폐, 단일 관점, 반론 부족의 강도
-6. 권위 차용 위험: 전문가·관계자 권위를 빌리지만 원자료가 부족한 정도
-7. 제목 위험도: 제목과 본문 불일치, 질문형 제목, 직접 인용형 제목, 제목 과장의 정도
-8. 인과 왜곡 위험: 근거 약한 인과 주장, 인과 단순화, 허위 인과 가능성
 
-텍스트만으로 판단하기 어려운 경우에는 점수를 과도하게 확신하지 말고 한계를 명확히 밝혀라.
+8개 카테고리:
+1. 감정 자극도
+2. 과장·선정성
+3. 출처 투명도
+4. 종합 위험도
+5. 의혹·고발 프레임
+6. 권위 차용 위험
+7. 제목 위험도
+8. 인과 왜곡 위험
 
 규칙 기반 분석 결과:
 - 감정 자극도: {rule_result["emotion_score"]}점
@@ -543,43 +554,58 @@ AI도 반드시 일반 분석과 같은 8개 카테고리로 각각 평가하라
   "final_advice": "사용자가 이 정보를 읽을 때 주의해야 할 점"
 }}
 
-점수 기준:
-- ai_emotion_score: 감정 자극도가 강할수록 높은 0~100 정수
-- ai_exaggeration_score: 과장·선정성이 강할수록 높은 0~100 정수
-- ai_source_transparency_score: 출처·원자료·검증 가능성이 높을수록 높은 0~100 정수
-- ai_risk_score: 종합 허위정보 위험 신호가 강할수록 높은 0~100 정수
-- ai_frame_score: 의혹·고발 프레임이 강할수록 높은 0~100 정수
-- ai_authority_borrow_score: 권위 차용 위험이 강할수록 높은 0~100 정수
-- ai_headline_score: 제목 위험도가 높을수록 높은 0~100 정수
-- ai_causal_score: 인과 왜곡 위험이 강할수록 높은 0~100 정수
+점수는 모두 0부터 100 사이의 정수로 작성하라.
 """
 
         response = None
+        last_error = None
+
         for attempt in range(MAX_GEMINI_RETRIES):
             try:
-                response = client.models.generate_content(model=gemini_model, contents=prompt)
+                response = client.models.generate_content(
+                    model=gemini_model,
+                    contents=prompt,
+                    config={
+                        "response_mime_type": "application/json",
+                        "temperature": 0.2,
+                    },
+                )
                 break
+
             except Exception as e:
+                last_error = e
+
                 if is_quota_error(e):
-                    return fallback_deep_analysis(text, rule_result), (
-                        "Gemini 사용량 한도에 도달해 대체 분석을 표시합니다."
+                    return None, (
+                        f"Gemini 사용량 한도, API 키, 또는 권한 문제로 분석하지 못했습니다. 실제 오류: {str(e)[:300]}"
                     )
+
                 if not is_retryable_error(e):
-                    raise
+                    return None, (
+                        f"Gemini 호출 오류로 분석하지 못했습니다. 실제 오류: {type(e).__name__}: {str(e)[:300]}"
+                    )
+
                 if attempt < MAX_GEMINI_RETRIES - 1:
                     time.sleep(2 ** attempt)
 
         if response is None:
-            return fallback_deep_analysis(text, rule_result), (
-                "선택한 Gemini 모델이 혼잡해 대체 분석을 표시합니다."
+            return None, (
+                f"선택한 Gemini 모델이 응답하지 않았습니다. 마지막 오류: {str(last_error)[:300]}"
             )
 
-        raw_text = response.text.strip().replace("```json", "").replace("```", "").strip()
-        parsed = json.loads(raw_text)
+        raw_text = getattr(response, "text", "")
 
-        defaults = fallback_deep_analysis(text, rule_result)
-        for key, value in defaults.items():
-            parsed.setdefault(key, value)
+        if not raw_text or not raw_text.strip():
+            return None, "Gemini 응답이 비어 있어 AI 분석 결과를 표시하지 못했습니다."
+
+        raw_text = raw_text.strip().replace("```json", "").replace("```", "").strip()
+
+        try:
+            parsed = json.loads(raw_text)
+        except json.JSONDecodeError:
+            return None, (
+                f"Gemini 응답이 JSON 형식이 아니어서 분석 결과를 표시하지 못했습니다. 응답 앞부분: {raw_text[:300]}"
+            )
 
         for score_key in [
             "ai_emotion_score",
@@ -595,10 +621,10 @@ AI도 반드시 일반 분석과 같은 8개 카테고리로 각각 평가하라
 
         return parsed, None
 
-    except json.JSONDecodeError:
-        return fallback_deep_analysis(text, rule_result), "Gemini 응답 형식이 맞지 않아 대체 분석을 표시합니다."
-    except Exception:
-        return fallback_deep_analysis(text, rule_result), "Gemini 분석 중 문제가 발생해 대체 분석을 표시합니다."
+    except Exception as e:
+        return None, (
+            f"Gemini 분석 중 오류가 발생했습니다. 실제 오류: {type(e).__name__}: {str(e)[:300]}"
+        )
 # -----------------------------
 # 7. Streamlit UI
 # -----------------------------한국형
