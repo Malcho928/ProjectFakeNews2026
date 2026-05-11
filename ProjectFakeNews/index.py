@@ -553,7 +553,7 @@ AI도 반드시 일반 분석과 같은 8개 카테고리로 각각 평가하라
 - ai_headline_score: 제목 위험도가 높을수록 높은 0~100 정수
 - ai_causal_score: 인과 왜곡 위험이 강할수록 높은 0~100 정수
 """
-        response = None
+ response = None
   for attempt in range(MAX_GEMINI_RETRIES):
       try:
           response = client.models.generate_content(model=gemini_model, contents=prompt)
@@ -595,7 +595,6 @@ AI도 반드시 일반 분석과 같은 8개 카테고리로 각각 평가하라
   return parsed, None
 
 except json.JSONDecodeError:return fallback_deep_analysis(text, rule_result), "Gemini 응답 형식이 맞지 않아 대체 분석을 표시합니다."except Exception:return fallback_deep_analysis(text, rule_result), "Gemini 분석 중 문제가 발생해 대체 분석을 표시합니다."
-
 
 # -----------------------------
 # 7. Streamlit UI
