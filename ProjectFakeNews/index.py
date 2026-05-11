@@ -553,21 +553,41 @@ AI도 반드시 일반 분석과 같은 8개 카테고리로 각각 평가하라
 - ai_headline_score: 제목 위험도가 높을수록 높은 0~100 정수
 - ai_causal_score: 인과 왜곡 위험이 강할수록 높은 0~100 정수
 """
-
         response = None
+        last_error = None
+
         for attempt in range(MAX_GEMINI_RETRIES):
             try:
-                response = client.models.generate_content(model=gemini_model, contents=prompt)
+                response = client.models.generate_content(
+                    model=gemini_model,
+                    contents=prompt,
+                    config={
+                        "response_mime_type": "application/json",
+                        "temperature": 0.2,
+                    },
+                )
                 break
+
             except Exception as e:
+                last_error = e
+
                 if is_quota_error(e):
                     return fallback_deep_analysis(text, rule_result), (
-                        "Gemini 사용량 한도에 도달해 대체 분석을 표시합니다."
+                        f"Gemini 사용량 한도에 도달해 대체 분석을 표시합니다. 실제 오류: {str(e)[:200]}"
                     )
+
                 if not is_retryable_error(e):
-                    raise
+                    return fallback_deep_analysis(text, rule_result), (
+                        f"Gemini 호출 오류로 대체 분석을 표시합니다. 실제 오류: {type(e).__name__}: {str(e)[:200]}"
+                    )
+
                 if attempt < MAX_GEMINI_RETRIES - 1:
                     time.sleep(2 ** attempt)
+
+        if response is None:
+            return fallback_deep_analysis(text, rule_result), (
+                f"Gemini 응답이 없어 대체 분석을 표시합니다. 마지막 오류: {str(last_error)[:200]}"
+            )
 
         if response is None:
             return fallback_deep_analysis(text, rule_result), (
