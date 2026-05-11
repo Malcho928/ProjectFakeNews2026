@@ -553,49 +553,52 @@ AI도 반드시 일반 분석과 같은 8개 카테고리로 각각 평가하라
 - ai_headline_score: 제목 위험도가 높을수록 높은 0~100 정수
 - ai_causal_score: 인과 왜곡 위험이 강할수록 높은 0~100 정수
 """
- response = None
-  for attempt in range(MAX_GEMINI_RETRIES):
-      try:
-          response = client.models.generate_content(model=gemini_model, contents=prompt)
-          break
-      except Exception as e:
-          if is_quota_error(e):
-              return fallback_deep_analysis(text, rule_result), (
-                  "Gemini 사용량 한도에 도달해 대체 분석을 표시합니다."
-              )
-          if not is_retryable_error(e):
-              raise
-          if attempt < MAX_GEMINI_RETRIES - 1:
-              time.sleep(2 ** attempt)
 
-  if response is None:
-      return fallback_deep_analysis(text, rule_result), (
-          "선택한 Gemini 모델이 혼잡해 대체 분석을 표시합니다."
-      )
+        response = None
+        for attempt in range(MAX_GEMINI_RETRIES):
+            try:
+                response = client.models.generate_content(model=gemini_model, contents=prompt)
+                break
+            except Exception as e:
+                if is_quota_error(e):
+                    return fallback_deep_analysis(text, rule_result), (
+                        "Gemini 사용량 한도에 도달해 대체 분석을 표시합니다."
+                    )
+                if not is_retryable_error(e):
+                    raise
+                if attempt < MAX_GEMINI_RETRIES - 1:
+                    time.sleep(2 ** attempt)
 
-  raw_text = response.text.strip().replace("```json", "").replace("```", "").strip()
-  parsed = json.loads(raw_text)
+        if response is None:
+            return fallback_deep_analysis(text, rule_result), (
+                "선택한 Gemini 모델이 혼잡해 대체 분석을 표시합니다."
+            )
 
-  defaults = fallback_deep_analysis(text, rule_result)
-  for key, value in defaults.items():
-      parsed.setdefault(key, value)
+        raw_text = response.text.strip().replace("```json", "").replace("```", "").strip()
+        parsed = json.loads(raw_text)
 
-  for score_key in [
-      "ai_emotion_score",
-      "ai_exaggeration_score",
-      "ai_source_transparency_score",
-      "ai_risk_score",
-      "ai_frame_score",
-      "ai_authority_borrow_score",
-      "ai_headline_score",
-      "ai_causal_score",
-  ]:
-      parsed[score_key] = clamp_score(parsed.get(score_key))
+        defaults = fallback_deep_analysis(text, rule_result)
+        for key, value in defaults.items():
+            parsed.setdefault(key, value)
 
-  return parsed, None
+        for score_key in [
+            "ai_emotion_score",
+            "ai_exaggeration_score",
+            "ai_source_transparency_score",
+            "ai_risk_score",
+            "ai_frame_score",
+            "ai_authority_borrow_score",
+            "ai_headline_score",
+            "ai_causal_score",
+        ]:
+            parsed[score_key] = clamp_score(parsed.get(score_key))
 
-except json.JSONDecodeError:return fallback_deep_analysis(text, rule_result), "Gemini 응답 형식이 맞지 않아 대체 분석을 표시합니다."except Exception:return fallback_deep_analysis(text, rule_result), "Gemini 분석 중 문제가 발생해 대체 분석을 표시합니다."
+        return parsed, None
 
+    except json.JSONDecodeError:
+        return fallback_deep_analysis(text, rule_result), "Gemini 응답 형식이 맞지 않아 대체 분석을 표시합니다."
+    except Exception:
+        return fallback_deep_analysis(text, rule_result), "Gemini 분석 중 문제가 발생해 대체 분석을 표시합니다."
 # -----------------------------
 # 7. Streamlit UI
 # -----------------------------한국형
