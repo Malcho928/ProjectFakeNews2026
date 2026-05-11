@@ -17,7 +17,7 @@ GEMINI_MODEL_OPTIONS = {
     "일반": "gemini-2.5-flash",
 }
 MAX_GEMINI_RETRIES = 2
-AI_LIMIT_NOTICE = "API 사정으로 AI분석은 일 20회로 제한되어 있습니다. 혹시 AI분석이 안된다면 다른 모델로 시도해보세요"
+AI_LIMIT_NOTICE = "API 사정으로 AI분석은 일 20회로 제한되어 있습니다. 만약 AI분석이 안된다면 다른 모델로 시도해보세요"
 
 # -----------------------------
 # 1. 한국형 가짜뉴스 위험 신호 사전 일반
