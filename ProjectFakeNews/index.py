@@ -607,8 +607,8 @@ AI도 반드시 일반 분석과 같은 8개 카테고리로 각각 평가하라
 if not st.session_state.get("ai_limit_notice_seen", False):
     show_ai_limit_notice()
 
-st.sidebar.header("설정")
-use_gemini = st.sidebar.checkbox("Gemini AI 분석 사용", value=True)
+st.sidebar.header("⚙ 설정")
+use_gemini = st.sidebar.checkbox("Gemini 분석 사용", value=True)
 selected_gemini_label = "라이트"
 selected_gemini_model = GEMINI_MODEL_OPTIONS[selected_gemini_label]
 
