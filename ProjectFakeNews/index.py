@@ -7,7 +7,7 @@ from google import genai
 
 st.set_page_config(page_title="가짜뉴스 판별기", page_icon="✅", layout="wide")
 
-st.title("🧾 Gemini기반 가짜뉴스 판별기")
+st.title("🧾 정후 엉덩이 기반 가짜뉴스 판별기")
 st.write("뉴스 기사 링크 또는 직접 입력한 글을 논문에 정리된 가짜뉴스 경향 기준으로 판별합니다.")
 
 # ⚠️ API 키를 공개 저장소에 올리지 마세요. 학교 프로젝트용으로 직접 넣을 경우 아래 문자열 안에 새 키를 넣으세요.
