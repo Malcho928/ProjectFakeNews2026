@@ -18,6 +18,26 @@ GEMINI_MODEL_OPTIONS = {
 }
 MAX_GEMINI_RETRIES = 2
 AI_LIMIT_NOTICE = "API 사정으로 AI분석은 일 20회로 제한되어 있습니다. 만약 AI분석이 안된다면 다른 모델로 시도해보세요"
+AI_SCORE_KEYS = [
+    "ai_emotion_score",
+    "ai_exaggeration_score",
+    "ai_source_transparency_score",
+    "ai_risk_score",
+    "ai_frame_score",
+    "ai_authority_borrow_score",
+    "ai_headline_score",
+    "ai_causal_score",
+]
+AI_TO_RULE_SCORE_KEY = {
+    "ai_emotion_score": "emotion_score",
+    "ai_exaggeration_score": "exaggeration_score",
+    "ai_source_transparency_score": "source_transparency_score",
+    "ai_risk_score": "risk_score",
+    "ai_frame_score": "frame_score",
+    "ai_authority_borrow_score": "authority_borrow_score",
+    "ai_headline_score": "headline_score",
+    "ai_causal_score": "causal_score",
+}
 
 # -----------------------------
 # 1. 한국형 가짜뉴스 위험 신호 사전 일반
@@ -108,6 +128,27 @@ def clamp_score(value):
         return max(0, min(100, int(round(float(value)))))
     except (TypeError, ValueError):
         return 0
+
+
+def normalize_ai_scores(result):
+    for score_key in AI_SCORE_KEYS:
+        result[score_key] = clamp_score(result.get(score_key))
+    return result
+
+
+def ai_scores_are_same_as_rule(ai_result, rule_result):
+    return all(
+        clamp_score(ai_result.get(ai_key)) == clamp_score(rule_result.get(rule_key))
+        for ai_key, rule_key in AI_TO_RULE_SCORE_KEY.items()
+    )
+
+
+def format_prompt_items(items, limit=10):
+    if not items:
+        return "없음"
+    visible_items = items[:limit]
+    suffix = " 외" if len(items) > limit else ""
+    return ", ".join(visible_items) + suffix
 
 
 def count_keywords(text, word_list):
@@ -503,41 +544,23 @@ def gemini_analysis(text, rule_result, gemini_model):
         client = genai.Client(api_key=GEMINI_API_KEY)
         shortened_text = text[:2500]
 
-        prompt = f"""
-너는 뉴스 기사와 SNS 글의 허위정보 위험 신호를 분석하는 보조 AI이다.
-절대로 글을 "가짜뉴스다/진짜뉴스다"라고 단정하지 마라.
-사용자가 비판적으로 정보를 판단하도록 돕는 것이 목적이다.
+        rule_signal_summary = f"""
+일반 분석에서 발견된 참고 신호(점수 아님):
+- 감정·주관 표현: {format_prompt_items(rule_result["found_emotion"] + rule_result["found_subjective"])}
+- 과장·선정 표현: {format_prompt_items(rule_result["found_exaggeration"])}
+- 명확한 출처 표현: {format_prompt_items(rule_result["found_source"])}
+- 공식 기관 표현: {format_prompt_items(rule_result["found_org"])}
+- 불명확한 출처 표현: {format_prompt_items(rule_result["found_vague_source"])}
+- 의혹·고발 프레임 표현: {format_prompt_items(rule_result["found_suspicion"])}
+- 권위 차용 표현: {format_prompt_items(rule_result["found_authority"])}
+- 인과 표현: {format_prompt_items(rule_result["found_causal"] + rule_result["found_weak_causal"])}
+- 제목 위험 신호: {format_prompt_items(rule_result["found_headline_signals"])}
+- 숫자 포함 개수: {rule_result["number_count"]}개
+- 링크 포함 개수: {rule_result["url_count"]}개
+"""
 
-분석 기준은 한국 학술논문에서 정리된 가짜뉴스 경향을 따른다.
-AI도 반드시 일반 분석과 같은 8개 카테고리로 각각 평가하라.
-
-8개 카테고리:
-1. 감정 자극도
-2. 과장·선정성
-3. 출처 투명도
-4. 종합 위험도
-5. 의혹·고발 프레임
-6. 권위 차용 위험
-7. 제목 위험도
-8. 인과 왜곡 위험
-
-규칙 기반 분석 결과:
-- 감정 자극도: {rule_result["emotion_score"]}점
-- 과장·선정성: {rule_result["exaggeration_score"]}점
-- 출처 투명도: {rule_result["source_transparency_score"]}점
-- 의혹·고발 프레임: {rule_result["frame_score"]}점
-- 권위 차용 위험: {rule_result["authority_borrow_score"]}점
-- 제목 위험도: {rule_result["headline_score"]}점
-- 인과 왜곡 위험: {rule_result["causal_score"]}점
-- 종합 위험도: {rule_result["risk_score"]}점
-- 위험 수준: {rule_result["risk_level"]}
-
-분석할 글:
-{shortened_text}
-
-반드시 아래 JSON 형식으로만 답하라. JSON 밖의 설명은 쓰지 마라.
-
-{{
+        json_schema = """
+{
   "core_claims": ["핵심 주장 1", "핵심 주장 2", "핵심 주장 3"],
   "check_needed_sentences": ["검증이 필요한 문장 1", "검증이 필요한 문장 2", "검증이 필요한 문장 3"],
   "risk_signals": ["위험 신호 1", "위험 신호 2", "위험 신호 3", "위험 신호 4"],
@@ -552,72 +575,130 @@ AI도 반드시 일반 분석과 같은 8개 카테고리로 각각 평가하라
   "ai_causal_score": 0,
   "neutral_summary": "자극적 표현을 줄인 중립적 요약",
   "final_advice": "사용자가 이 정보를 읽을 때 주의해야 할 점"
-}}
+}
+"""
+
+        def request_json(current_prompt):
+            response = None
+            last_error = None
+
+            for attempt in range(MAX_GEMINI_RETRIES):
+                try:
+                    response = client.models.generate_content(
+                        model=gemini_model,
+                        contents=current_prompt,
+                        config={
+                            "response_mime_type": "application/json",
+                            "temperature": 0.35,
+                        },
+                    )
+                    break
+
+                except Exception as e:
+                    last_error = e
+
+                    if is_quota_error(e):
+                        return None, (
+                            f"Gemini 사용량 한도, API 키, 또는 권한 문제로 분석하지 못했습니다. 실제 오류: {str(e)[:300]}"
+                        )
+
+                    if not is_retryable_error(e):
+                        return None, (
+                            f"Gemini 호출 오류로 분석하지 못했습니다. 실제 오류: {type(e).__name__}: {str(e)[:300]}"
+                        )
+
+                    if attempt < MAX_GEMINI_RETRIES - 1:
+                        time.sleep(2 ** attempt)
+
+            if response is None:
+                return None, (
+                    f"선택한 Gemini 모델이 응답하지 않았습니다. 마지막 오류: {str(last_error)[:300]}"
+                )
+
+            raw_text = getattr(response, "text", "")
+
+            if not raw_text or not raw_text.strip():
+                return None, "Gemini 응답이 비어 있어 AI 분석 결과를 표시하지 못했습니다."
+
+            raw_text = raw_text.strip().replace("```json", "").replace("```", "").strip()
+
+            try:
+                parsed = json.loads(raw_text)
+            except json.JSONDecodeError:
+                return None, (
+                    f"Gemini 응답이 JSON 형식이 아니어서 분석 결과를 표시하지 못했습니다. 응답 앞부분: {raw_text[:300]}"
+                )
+
+            return normalize_ai_scores(parsed), None
+
+        prompt = f"""
+너는 뉴스 기사와 SNS 글의 허위정보 위험 신호를 분석하는 보조 AI이다.
+절대로 글을 "가짜뉴스다/진짜뉴스다"라고 단정하지 마라.
+사용자가 비판적으로 정보를 판단하도록 돕는 것이 목적이다.
+
+분석 기준은 한국 학술논문에서 정리된 가짜뉴스 경향을 따른다.
+AI도 반드시 일반 분석과 같은 8개 카테고리로 각각 평가하라.
+단, 일반 분석 점수를 따라 쓰지 말고 원문 맥락을 읽어 독립적으로 점수를 매겨라.
+
+8개 카테고리:
+1. 감정 자극도
+2. 과장·선정성
+3. 출처 투명도
+4. 종합 위험도
+5. 의혹·고발 프레임
+6. 권위 차용 위험
+7. 제목 위험도
+8. 인과 왜곡 위험
+
+채점 원칙:
+- 참고 신호는 단어 사전이 찾은 목록일 뿐이며 정답이나 점수가 아니다.
+- 단어가 없어도 맥락상 위험하면 점수를 올리고, 단어가 있어도 근거가 충분하면 점수를 낮춰라.
+- ai_risk_score는 나머지 세부 점수와 글의 전체 신뢰 위험을 종합해 일관되게 매겨라.
+- 일반 분석 점수와 일부 항목이 같을 수는 있지만, 모든 항목을 그대로 맞추려 하지 마라.
+
+{rule_signal_summary}
+
+분석할 글:
+{shortened_text}
+
+반드시 아래 JSON 형식으로만 답하라. JSON 밖의 설명은 쓰지 마라.
+
+{json_schema}
 
 점수는 모두 0부터 100 사이의 정수로 작성하라.
 """
 
-        response = None
-        last_error = None
+        parsed, error = request_json(prompt)
+        if error:
+            return None, error
 
-        for attempt in range(MAX_GEMINI_RETRIES):
-            try:
-                response = client.models.generate_content(
-                    model=gemini_model,
-                    contents=prompt,
-                    config={
-                        "response_mime_type": "application/json",
-                        "temperature": 0.2,
-                    },
-                )
-                break
+        if ai_scores_are_same_as_rule(parsed, rule_result):
+            independent_prompt = f"""
+첫 번째 AI 점수가 일반 분석 점수와 완전히 같았다.
+이번에는 일반 분석 참고 신호도 보지 말고, 아래 원문만 기준으로 다시 독립 채점하라.
 
-            except Exception as e:
-                last_error = e
+평가 기준:
+1. 감정 자극도
+2. 과장·선정성
+3. 출처 투명도
+4. 종합 위험도
+5. 의혹·고발 프레임
+6. 권위 차용 위험
+7. 제목 위험도
+8. 인과 왜곡 위험
 
-                if is_quota_error(e):
-                    return None, (
-                        f"Gemini 사용량 한도, API 키, 또는 권한 문제로 분석하지 못했습니다. 실제 오류: {str(e)[:300]}"
-                    )
+분석할 글:
+{shortened_text}
 
-                if not is_retryable_error(e):
-                    return None, (
-                        f"Gemini 호출 오류로 분석하지 못했습니다. 실제 오류: {type(e).__name__}: {str(e)[:300]}"
-                    )
+반드시 아래 JSON 형식으로만 답하라. JSON 밖의 설명은 쓰지 마라.
 
-                if attempt < MAX_GEMINI_RETRIES - 1:
-                    time.sleep(2 ** attempt)
+{json_schema}
 
-        if response is None:
-            return None, (
-                f"선택한 Gemini 모델이 응답하지 않았습니다. 마지막 오류: {str(last_error)[:300]}"
-            )
-
-        raw_text = getattr(response, "text", "")
-
-        if not raw_text or not raw_text.strip():
-            return None, "Gemini 응답이 비어 있어 AI 분석 결과를 표시하지 못했습니다."
-
-        raw_text = raw_text.strip().replace("```json", "").replace("```", "").strip()
-
-        try:
-            parsed = json.loads(raw_text)
-        except json.JSONDecodeError:
-            return None, (
-                f"Gemini 응답이 JSON 형식이 아니어서 분석 결과를 표시하지 못했습니다. 응답 앞부분: {raw_text[:300]}"
-            )
-
-        for score_key in [
-            "ai_emotion_score",
-            "ai_exaggeration_score",
-            "ai_source_transparency_score",
-            "ai_risk_score",
-            "ai_frame_score",
-            "ai_authority_borrow_score",
-            "ai_headline_score",
-            "ai_causal_score",
-        ]:
-            parsed[score_key] = clamp_score(parsed.get(score_key))
+점수는 모두 0부터 100 사이의 정수로 작성하라.
+"""
+            independent_result, independent_error = request_json(independent_prompt)
+            if independent_result and not independent_error:
+                parsed = independent_result
 
         return parsed, None
 
