@@ -710,6 +710,7 @@ AI도 반드시 일반 분석과 같은 8개 카테고리로 각각 평가하라
 # 7. Streamlit UI
 # -----------------------------한국형
 if not st.session_state.get("ai_limit_notice_seen", False):
+    st.session_state["ai_limit_notice_seen"] = True
     show_ai_limit_notice()
 
 st.sidebar.header("⚙ 설정")
